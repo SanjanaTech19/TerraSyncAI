@@ -7,10 +7,10 @@ using Google Gemini API when GEMINI_API_KEY is configured.
 import os
 import json
 from typing import Dict, Any, List
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
 # Load environment variables from .env file
-load_dotenv()
+load_dotenv(find_dotenv(usecwd=True))
 
 def generate_llm_explanation(parcel: Dict[str, Any], conflicts: List[Dict[str, Any]], harmonized_res: Dict[str, Any]) -> Dict[str, Any]:
     pid = parcel["id"]
@@ -32,8 +32,13 @@ def generate_llm_explanation(parcel: Dict[str, Any], conflicts: List[Dict[str, A
         try:
             import google.generativeai as genai
             genai.configure(api_key=api_key)
-            model_name = os.getenv("LLM_MODEL_NAME", "gemini-1.5-flash")
-            model = genai.GenerativeModel(model_name)
+            
+            candidate_models = [
+                os.getenv("LLM_MODEL_NAME", "gemini-3.8-flash"),
+                "gemini-3.8-flash",
+                "gemini-3.5-flash",
+                "gemini-2.5-flash"
+            ]
             
             prompt = f"""
 You are an expert GIS and Urban Land Revenue Analyst for TerraSync AI platform.
@@ -62,27 +67,40 @@ Format your output as JSON with two keys:
 
 Respond ONLY with valid JSON.
 """
-            response = model.generate_content(prompt)
-            raw_text = response.text.strip()
+            model = None
+            response = None
+            used_model_name = ""
             
-            # Clean JSON formatting if wrapped in ```json ... ```
-            if raw_text.startswith("```"):
-                raw_text = raw_text.split("```")[1]
-                if raw_text.startswith("json"):
-                    raw_text = raw_text[4:]
-            raw_text = raw_text.strip()
-            
-            parsed = json.loads(raw_text)
-            
-            return {
-                "parcel_id": pid,
-                "executive_summary": parsed.get("executive_summary", ""),
-                "recommended_actions": parsed.get("recommended_actions", []),
-                "llm_model": f"Live {model_name} (Google AI Studio API)",
-                "transparency_guarantee": "Real-time AI explanation powered by Google Gemini API."
-            }
+            for m_name in candidate_models:
+                try:
+                    model = genai.GenerativeModel(m_name)
+                    response = model.generate_content(prompt)
+                    used_model_name = m_name
+                    break
+                except Exception as model_err:
+                    continue
+                    
+            if response and response.text:
+                raw_text = response.text.strip()
+                
+                # Clean JSON formatting if wrapped in ```json ... ```
+                if raw_text.startswith("```"):
+                    raw_text = raw_text.split("```")[1]
+                    if raw_text.startswith("json"):
+                        raw_text = raw_text[4:]
+                raw_text = raw_text.strip()
+                
+                parsed = json.loads(raw_text)
+                
+                return {
+                    "parcel_id": pid,
+                    "executive_summary": parsed.get("executive_summary", ""),
+                    "recommended_actions": parsed.get("recommended_actions", []),
+                    "llm_model": f"Live {used_model_name} (Google AI Studio API)",
+                    "transparency_guarantee": "Real-time AI explanation powered by Google Gemini API."
+                }
         except Exception as e:
-            # If API call fails or encounters rate limit, fall back gracefully
+            # If API call fails, fall back gracefully
             print(f"[TerraSync AI LLM Warning] Gemini API call exception: {e}")
             
     # Deterministic fallback engine when GEMINI_API_KEY is not configured yet
